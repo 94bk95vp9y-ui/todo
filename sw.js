@@ -1,6 +1,6 @@
 // Tagwerk – Service Worker: macht die App offline nutzbar.
 // Strategie: sofort aus dem Cache antworten, im Hintergrund aktualisieren.
-const CACHE = 'tagwerk-v1';
+const CACHE = 'tagwerk-v2';
 const ASSETS = [
   './', 'index.html', 'css/app.css', 'js/app.js', 'js/store.js', 'js/sky.js',
   'fonts/fraunces.woff2', 'fonts/fraunces-italic.woff2', 'manifest.webmanifest',

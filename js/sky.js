@@ -106,6 +106,12 @@ export function renderSky({ now, settings, mode, plan, doneMinutes }) {
     body += `<path d="${arcPath(0, sunT)}" fill="none" stroke="url(#trail)" stroke-width="2.6" stroke-linecap="round"/>`;
   }
 
+  // belegte Zeiten als breites, blasses Band
+  (plan?.blocks || []).forEach((b) => {
+    const d = arcPath(tOf(b.start), tOf(b.end));
+    if (d) body += `<path d="${d}" fill="none" stroke="${rgb(ink, useDark ? 0.14 : 0.22)}" stroke-width="15"/>`;
+  });
+
   // geplante Aufgaben als Abschnitte auf dem Bogen
   if (plan) {
     plan.items.forEach((it, i) => {

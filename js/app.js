@@ -36,6 +36,11 @@ const P = {
   warn: '<path d="M12 4.5l8.5 15h-17zM12 10.5v4M12 17.2v.3"/>',
   redo: '<path d="M16 5l5 5-5 5M21 10H10a5.5 5.5 0 000 11h3"/>',
   save: '<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
+  flag: '<path d="M6 21V4.5M6 4.5h11.5l-2.6 4 2.6 4H6"/>',
+  list: '<path d="M9.5 7h10M9.5 12h10M9.5 17h10M5 7h.01M5 12h.01M5 17h.01"/>',
+  note: '<path d="M6 4h9l4 4v12H6zM9.5 12h6M9.5 16h4"/>',
+  back: '<path d="M8 5L3 10l5 5M3 10h11a5.5 5.5 0 010 11h-3"/>',
+  bottom: '<path d="M5 19.5h14M12 4v10.5M7 10l5 5 5-5"/>',
   open: '<path d="M12 15.5V4.5M7 9l5-5 5 5M5 20h14"/>',
 };
 const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
@@ -94,11 +99,20 @@ const REPEAT = { daily: 'Täglich', weekdays: 'Werktags', weekly: 'Wöchentlich'
 function tagsHtml(t, { time = true } = {}) {
   let h = '';
   if (t.important) h += `<span class="tag star">${icon('star')}Wichtig</span>`;
+  const due = S.dueInfo(t, ui.today);
+  if (due) h += `<span class="tag ${due.warn ? 'moved' : ''}">${icon('flag')}${due.label}</span>`;
   if (time && t.fixed != null) h += `<span class="tag">${icon('clock')}${fmtTime(t.fixed)} fest</span>`;
+  if (t.steps?.length) h += `<span class="tag">${icon('list')}${t.steps.filter((x) => x.done).length}/${t.steps.length}</span>`;
   const rep = S.repeatOf(t);
   if (rep) h += `<span class="tag">${icon('repeat')}${REPEAT[rep]}</span>`;
   if (t.moved > 0) h += `<span class="tag moved">${icon('redo')}${t.moved}× verschoben</span>`;
+  if (t.note) h += `<span class="tag" aria-label="hat Notiz">${icon('note')}</span>`;
   return h;
+}
+
+function stepsHtml(t, act = 'data-act="step"') {
+  if (!t.steps?.length) return '';
+  return `<ul class="steps">${t.steps.map((x, i) => `<li class="${x.done ? 'd' : ''}"><button ${act} data-id="${t.id}" data-i="${i}"><i>${icon('check')}</i><span>${esc(x.t)}</span></button></li>`).join('')}</ul>`;
 }
 
 /* ============================================================
@@ -146,6 +160,7 @@ function nowCard(it, plan, now) {
   return `<article class="now ${it.running && !f.pausedAt ? 'running' : ''}" data-id="${t.id}" style="view-transition-name:t-${t.id}">
     <div class="eyebrow"><i></i>${label}</div>
     <button class="now-main" data-act="edit" data-id="${t.id}"><h2>${esc(t.title)}</h2><div class="meta">${meta}</div></button>
+    ${canAct ? stepsHtml(t) : ''}
     ${actions || check ? `<div class="now-actions">${actions}${check}</div>` : ''}
   </article>`;
 }
@@ -154,12 +169,18 @@ function rowHtml(it) {
   const t = it.task;
   const canAct = ui.day <= ui.today;
   const drag = !it.fixed && !it.running ? 'data-drag' : '';
+  const extra = it.fixed ? `<span class="tag ${it.conflict ? 'moved' : ''}">${icon(it.conflict ? 'warn' : 'clock')}${it.conflict ? 'überschneidet sich' : 'Termin'}</span>` : '';
   return `<li class="row ${it.late ? 'late' : ''}" data-id="${t.id}" ${drag} style="view-transition-name:t-${t.id}">
     <div class="when"><b>${fmtTime(it.start)}</b><span>${fmtDur(t.dur)}</span></div>
     <div class="cardrow">
-      <button class="body" data-act="edit" data-id="${t.id}"><span class="title">${esc(t.title)}</span><span class="tags">${tagsHtml(t, { time: !it.fixed })}${it.fixed ? `<span class="tag">${icon('clock')}Termin</span>` : ''}</span></button>
+      <button class="body" data-act="edit" data-id="${t.id}"><span class="title">${esc(t.title)}</span><span class="tags">${tagsHtml(t, { time: !it.fixed })}${extra}</span></button>
       ${canAct ? `<button class="check" data-act="done" data-id="${t.id}" aria-label="Erledigt: ${esc(t.title)}">${icon('check')}</button>` : ''}
     </div></li>`;
+}
+
+function blockRow(b) {
+  return `<li class="blk"><div class="when"><b>${fmtTime(b.start)}</b><span>–${fmtTime(b.end)}</span></div>
+    <div class="blk-body"><span>${esc(b.name)}</span><button data-act="skip-block" data-id="${b.id}">${ui.day === ui.today ? 'Heute frei' : 'Frei'}</button></div></li>`;
 }
 
 function banner({ title, text, btn, act, warn, x }) {
@@ -175,6 +196,7 @@ function dayView(plan, now) {
   const left = isToday ? S.leftovers(today) : [];
   const inboxN = S.inbox().length;
   const closed = !!S.state.closed[today];
+  const risk = isToday ? S.dueRisk(today) : [];
   let h = '';
 
   if (isIOS && !isStandalone() && !S.state.settings.hintDismissed) {
@@ -187,6 +209,12 @@ function dayView(plan, now) {
     note = banner({ title: 'Tag abgeschlossen', text: 'Gut gemacht. Morgen geht die Sonne wieder auf.', btn: 'Morgen', act: 'goto-tomorrow' });
   } else if (closeTime) {
     note = banner({ title: 'Zeit für den Tagesabschluss', text: 'Kurz zurückblicken, Offenes bewusst entscheiden.', btn: 'Abschließen', act: 'close-day' });
+  } else if (isToday && risk.length) {
+    note = banner({
+      title: risk.length === 1 ? `Frist: ${esc(risk[0].title)}` : `${risk.length} Fristen laufen ab`,
+      text: risk.length === 1 ? `${S.dueInfo(risk[0], today).label} – und noch nicht eingeplant.` : 'Heute oder morgen fällig und noch nicht eingeplant.',
+      btn: 'Einplanen', act: 'decide-due', warn: true,
+    });
   } else if (left.length) {
     note = banner({ title: `${plural(left.length, 'Aufgabe ist', 'Aufgaben sind')} liegen geblieben`, text: 'Heute, später oder streichen?', btn: 'Entscheiden', act: 'decide-left', warn: true });
   } else if (plan.late.length) {
@@ -195,6 +223,10 @@ function dayView(plan, now) {
       text: `${plural(plan.late.length, 'Aufgabe passt', 'Aufgaben passen')} nicht mehr vor ${fmtTime(dayEnd)}.`,
       btn: 'Entscheiden', act: 'decide-late', warn: true,
     });
+  } else if (isToday && !closed && inboxN && !S.state.planned[today] && plan.items.length) {
+    note = banner({ title: 'Kurz den Tag planen?', text: `${plural(inboxN, 'Aufgabe wartet', 'Aufgaben warten')} im Eingang. Was davon schaffst du heute?`, btn: 'Planen', act: 'plan', x: 'skip-plan' });
+  } else if (isToday && !S.state.settings.blockHint && !S.state.blocks.length && S.state.tasks.length >= 3) {
+    note = banner({ title: 'Feste Zeiten wie Arbeit oder Uni?', text: 'Trag sie einmal ein – Tagwerk plant dann drumherum.', btn: 'Eintragen', act: 'blocks', x: 'dismiss-blockhint' });
   }
   h += note;
 
@@ -213,16 +245,24 @@ function dayView(plan, now) {
         ${inboxN ? `<button class="btn ghost" data-act="plan">${icon('inbox')}Aus dem Eingang planen · ${inboxN}</button>` : ''}</div></div>`;
     }
   } else {
-    h += nowCard(plan.items[0], plan, now);
-    if (plan.items.length > 1) {
+    const first = plan.items[0];
+    const entries = [
+      ...plan.items.slice(1).map((it) => ({ start: it.start, end: it.end, it })),
+      ...plan.blocks.map((b) => ({ start: b.start, end: b.end, b })),
+    ].sort((a, b) => a.start - b.start);
+    const before = entries.filter((e) => e.b && e.start <= first.start);
+    if (before.length) h += `<ul class="list pre">${before.map((e) => blockRow(e.b)).join('')}</ul>`;
+    h += nowCard(first, plan, now);
+    const after = entries.filter((e) => !before.includes(e));
+    if (after.length) {
       h += '<ol class="list" id="list">';
-      let prevEnd = plan.items[0].end;
-      let divided = plan.items[0].late;
-      for (const it of plan.items.slice(1)) {
-        if (it.late && !divided) { h += `<li class="dayend">Tagesende ${fmtTime(dayEnd)}</li>`; divided = true; }
-        else if (it.start - prevEnd >= 15) h += `<li class="gap">${fmtDur(it.start - prevEnd)} Luft</li>`;
-        h += rowHtml(it);
-        prevEnd = Math.max(prevEnd, it.end);
+      let prevEnd = Math.max(first.end, ...before.map((e) => e.end));
+      let divided = first.late;
+      for (const e of after) {
+        if (e.it?.late && !divided) { h += `<li class="dayend">Tagesende ${fmtTime(dayEnd)}</li>`; divided = true; }
+        else if (e.start - prevEnd >= 15 && !divided) h += `<li class="gap">${fmtDur(e.start - prevEnd)} Luft</li>`;
+        h += e.b ? blockRow(e.b) : rowHtml(e.it);
+        prevEnd = Math.max(prevEnd, e.end);
       }
       h += '</ol>';
     }
@@ -300,7 +340,7 @@ function render(opts = {}) {
   if (sEl.innerHTML !== hl.sub) sEl.innerHTML = hl.sub;
   sEl.classList.toggle('warn', !!hl.warn);
 
-  $('#dayLabel').innerHTML = `${dayLabel(ui.day, today)} <small>· ${weekdayShort(ui.day)} ${dateShort(ui.day)}</small>`;
+  $('#dayLabel').innerHTML = `${dayLabel(ui.day, today)} <small>· ${weekdayShort(ui.day)} ${dateShort(ui.day)}</small>${icon('chevD')}`;
   $('#todayBtn').hidden = ui.day === today || ui.tab !== 'day';
   $('#prevDay').disabled = ui.day <= addDays(today, -14);
   $('#nextDay').disabled = ui.day >= addDays(today, 60);
@@ -361,7 +401,26 @@ function mount(el, { backdrop = true, high = false, dismiss = true, onClose } = 
 function parseSmart(text) {
   let title = ` ${text} `;
   const out = {};
-  let m = title.match(/\s(?:um\s+)?(\d{1,2})[:.](\d{2})(?:\s*uhr)?(?=\s)/i) || title.match(/\sum\s+(\d{1,2})(?:\s*uhr)?(?=\s)/i) || title.match(/\s(\d{1,2})\s*uhr(?=\s)/i);
+  // Frist: „bis Freitag“, „bis morgen“, „bis 15.11.“
+  let m = title.match(/\sbis\s+(heute|morgen|übermorgen|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|mo|di|mi|do|fr|sa|so|\d{1,2}\.\d{1,2}\.?)(?=\s)/i);
+  if (m) {
+    const w = m[1].toLowerCase(), today = dayKey();
+    let due = null;
+    if (w === 'heute') due = today;
+    else if (w === 'morgen') due = addDays(today, 1);
+    else if (w === 'übermorgen') due = addDays(today, 2);
+    else if (/^\d/.test(w)) {
+      const [d, mo] = w.split('.').map(Number);
+      const y = new Date().getFullYear();
+      if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) { due = dayKey(new Date(y, mo - 1, d)); if (due < today) due = dayKey(new Date(y + 1, mo - 1, d)); }
+    } else {
+      const wd = ['so', 'mo', 'di', 'mi', 'do', 'fr', 'sa'].indexOf(w.slice(0, 2));
+      const diff = (wd - new Date().getDay() + 7) % 7 || 7;
+      due = addDays(today, diff);
+    }
+    if (due) { out.due = due; title = title.replace(m[0], ' '); }
+  }
+  m = title.match(/\s(?:um\s+)?(\d{1,2})[:.](\d{2})(?:\s*uhr)?(?=\s)/i) || title.match(/\sum\s+(\d{1,2})(?:\s*uhr)?(?=\s)/i) || title.match(/\s(\d{1,2})\s*uhr(?=\s)/i);
   if (m && +m[1] < 24 && +(m[2] || 0) < 60) { out.fixed = +m[1] * 60 + +(m[2] || 0); title = title.replace(m[0], ' '); }
   m = title.match(/\s(\d+(?:[.,]\d+)?)\s*(minuten|min|m|stunden|stunde|std|h)\.?(?=\s)/i);
   if (m) {
@@ -378,36 +437,62 @@ function parseSmart(text) {
 
 /* ---------- Aufgabe anlegen / bearbeiten ---------- */
 const DURS = [10, 15, 30, 45, 60, 90, 120, 180];
+const TIP = 'Tipp: „Sport 45 min um 18:00“ oder „Bericht bis Freitag“.';
+
+/** Kleine Auswahl in der Bildschirmmitte. */
+function choose({ count, title, text, options }) {
+  const el = document.createElement('div');
+  el.className = 'dialog';
+  el.setAttribute('role', 'alertdialog');
+  el.innerHTML = `${count ? `<div class="count">${count}</div>` : ''}<h3>${title}</h3>${text ? `<p>${text}</p>` : '<p></p>'}
+    ${options.map((o, i) => `<button class="btn ${o.cls || 'ghost'}" data-i="${i}">${o.label}</button>`).join('')}`;
+  const d = mount(el, { high: true });
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return;
+    d.close();
+    options[+b.dataset.i].run?.();
+  });
+  return d;
+}
+
 function openTaskSheet(task) {
   const editing = !!task;
   const today = dayKey(), tomorrow = addDays(today, 1);
-  const f = editing
-    ? { title: task.title, dur: task.dur, day: task.day, fixed: task.fixed, important: task.important, repeat: S.repeatOf(task) }
-    : { title: '', dur: 30, day: ui.tab === 'inbox' ? null : (ui.day >= today ? ui.day : today), fixed: null, important: false, repeat: null };
-  const base = { ...f };
-  const manual = {};
+  const blank = () => ({ title: '', dur: 30, day: ui.tab === 'inbox' ? null : (ui.day >= today ? ui.day : today), fixed: null, important: false, repeat: null, due: null });
+  let f = editing
+    ? { title: task.title, dur: task.dur, day: task.day, fixed: task.fixed, important: task.important, repeat: S.repeatOf(task), due: task.due || null, note: task.note || '', steps: (task.steps || []).map((x) => ({ ...x })) }
+    : blank();
+  let base = { ...f };
+  let manual = {};
   const el = document.createElement('form');
   el.className = 'sheet' + (editing ? '' : ' top');
   el.noValidate = true;
   el.setAttribute('aria-label', editing ? 'Aufgabe bearbeiten' : 'Neue Aufgabe');
-  const order = editing && task.day ? S.schedule(task.day).items.findIndex((i) => i.task.id === task.id) : -1;
+  const dayPlan = editing && task.day && !task.done ? S.schedule(task.day) : null;
+  const canOrder = dayPlan && task.fixed == null && dayPlan.items.filter((i) => !i.fixed).length > 1;
 
   el.innerHTML = `<div class="grabber"></div>
     <input class="title-in" name="title" type="text" enterkeyhint="done" autocomplete="off" autocapitalize="sentences" placeholder="Was ist zu tun?" value="${esc(f.title)}">
-    ${editing ? '' : '<p class="hint" id="hint">Tipp: „Sport 45 min um 18:00“ füllt alles aus.</p>'}
+    ${editing ? '' : `<p class="hint" id="hint">${TIP}</p>`}
     <div class="dyn"></div>
-    ${editing ? `<div class="quick">
-        ${order > 0 && task.fixed == null && !task.done ? `<button type="button" class="btn ghost" data-a="next">${icon('top')}Als Nächstes</button>` : ''}
-        <button type="button" class="btn danger" data-a="del">${icon('trash')}Löschen</button></div>` : ''}
+    ${editing ? `<div class="field"><div class="lbl">Schritte</div><ul class="step-edit"></ul>
+        <input class="line-in" name="step" type="text" enterkeyhint="next" autocomplete="off" placeholder="Kleinen Schritt hinzufügen …"></div>
+      <div class="field"><div class="lbl">Notiz</div><textarea class="line-in" name="note" rows="2" placeholder="Details, Links, Gedanken …">${esc(f.note)}</textarea></div>
+      <div class="quick">
+        ${task.done ? '' : `<button type="button" class="btn sun" data-a="start">${icon('play', 'fill')}Starten</button>`}
+        ${canOrder ? `<button type="button" class="btn ghost" data-a="next" aria-label="Als Nächstes">${icon('top')}Zuerst</button><button type="button" class="btn ghost" data-a="last" aria-label="Ans Ende">${icon('bottom')}Zuletzt</button>` : ''}
+        <button type="button" class="btn danger icon-only" data-a="del" aria-label="Löschen">${icon('trash')}</button></div>` : ''}
     <div class="sheet-actions"><button class="btn ${editing ? '' : 'sun'} wide" type="submit">${editing ? 'Fertig' : 'Hinzufügen'}</button></div>`;
 
   const dyn = $('.dyn', el), input = $('.title-in', el);
   function draw() {
-    const durs = DURS.includes(f.dur) ? DURS : [...DURS, f.dur].sort((a, b) => a - b);
     const otherDay = f.day && f.day !== today && f.day !== tomorrow;
     const keep = $('.chips', dyn)?.scrollLeft;
     dyn.innerHTML = `
-      <div class="field"><div class="lbl">Dauer</div><div class="chips">${durs.map((d) => `<button type="button" class="chip ${d === f.dur ? 'on' : ''}" data-dur="${d}">${fmtDur(d)}</button>`).join('')}</div></div>
+      <div class="field"><div class="lbl split"><span>Dauer</span>
+        <span class="stepper"><button type="button" data-step="-1" aria-label="Kürzer">−</button><b>${fmtDur(f.dur)}</b><button type="button" data-step="1" aria-label="Länger">+</button></span></div>
+        <div class="chips">${DURS.map((d) => `<button type="button" class="chip ${d === f.dur ? 'on' : ''}" data-dur="${d}">${fmtDur(d)}</button>`).join('')}</div></div>
       <div class="field"><div class="lbl">Wann</div><div class="chips">
         <button type="button" class="chip ${f.day === today ? 'on' : ''}" data-day="${today}">Heute</button>
         <button type="button" class="chip ${f.day === tomorrow ? 'on' : ''}" data-day="${tomorrow}">Morgen</button>
@@ -415,41 +500,63 @@ function openTaskSheet(task) {
         <label class="chip ${otherDay ? 'on' : ''}">${icon('cal')}<span>${otherDay ? `${weekdayShort(f.day)} ${dateShort(f.day)}` : 'Datum'}</span><input type="date" name="date" min="${today}" value="${otherDay ? f.day : ''}" aria-label="Datum wählen"></label>
       </div></div>
       <div class="field"><div class="chips">
-        <label class="chip ${f.fixed != null ? 'on' : ''}">${icon('clock')}<span>${f.fixed != null ? fmtTime(f.fixed) : 'Uhrzeit'}</span><input type="time" name="time" value="${f.fixed != null ? fmtTime(f.fixed) : ''}" aria-label="Feste Uhrzeit">${f.fixed != null ? `<button type="button" class="clr" data-clr aria-label="Uhrzeit entfernen">${icon('x')}</button>` : ''}</label>
+        <label class="chip ${f.fixed != null ? 'on' : ''}">${icon('clock')}<span>${f.fixed != null ? fmtTime(f.fixed) : 'Uhrzeit'}</span><input type="time" name="time" value="${f.fixed != null ? fmtTime(f.fixed) : ''}" aria-label="Feste Uhrzeit">${f.fixed != null ? `<button type="button" class="clr" data-clr="fixed" aria-label="Uhrzeit entfernen">${icon('x')}</button>` : ''}</label>
+        <label class="chip ${f.due ? 'on' : ''}">${icon('flag')}<span>${f.due ? `bis ${weekdayShort(f.due)} ${dateShort(f.due)}` : 'Frist'}</span><input type="date" name="due" min="${today}" value="${f.due || ''}" aria-label="Frist wählen">${f.due ? `<button type="button" class="clr" data-clr="due" aria-label="Frist entfernen">${icon('x')}</button>` : ''}</label>
         <button type="button" class="chip star ${f.important ? 'on' : ''}" data-imp>${icon('star')}Wichtig</button>
         <button type="button" class="chip ${f.repeat ? 'on' : ''}" data-rep>${icon('repeat')}${f.repeat ? (f.repeat === 'weekly' && f.day ? `Jeden ${weekdayShort(f.day)}` : REPEAT[f.repeat]) : 'Einmalig'}</button>
       </div></div>`;
-    // gewählte Dauer sichtbar halten
     const row = $('.chips', dyn), on = $('.chip.on', row);
     if (keep != null) row.scrollLeft = keep;
     if (on && (on.offsetLeft + on.offsetWidth > row.scrollLeft + row.clientWidth - 18 || on.offsetLeft < row.scrollLeft + 18)) row.scrollLeft = on.offsetLeft - row.clientWidth / 2 + on.offsetWidth / 2;
   }
   draw();
 
+  const stepList = $('.step-edit', el);
+  const drawSteps = () => {
+    if (!stepList) return;
+    stepList.innerHTML = f.steps.map((x, i) => `<li class="${x.done ? 'd' : ''}"><button type="button" class="sbox" data-si="${i}" aria-label="Schritt abhaken">${icon('check')}</button><span>${esc(x.t)}</span><button type="button" class="sdel" data-sd="${i}" aria-label="Schritt entfernen">${icon('x')}</button></li>`).join('');
+  };
+  drawSteps();
+  const takeStep = () => {
+    const i = $('[name=step]', el);
+    if (!i) return;
+    const v = i.value.trim();
+    if (v) { f.steps.push({ t: v, done: false }); i.value = ''; drawSteps(); }
+  };
+
   const applyParsed = () => {
     if (editing) return;
     const p = parseSmart(input.value);
     const got = [];
-    for (const k of ['dur', 'fixed', 'day', 'important']) {
+    for (const k of ['dur', 'fixed', 'day', 'important', 'due']) {
       if (manual[k]) continue;
       f[k] = k in p ? p[k] : base[k];
     }
     if ('dur' in p) got.push(fmtDur(p.dur));
     if ('fixed' in p) got.push(`${fmtTime(p.fixed)} Uhr`);
     if ('day' in p) got.push(dayLabel(p.day));
+    if ('due' in p) got.push(`Frist ${weekdayShort(p.due)} ${dateShort(p.due)}`);
     if (p.important) got.push('wichtig');
-    $('#hint', el).textContent = got.length ? `Erkannt: ${got.join(' · ')}` : 'Tipp: „Sport 45 min um 18:00“ füllt alles aus.';
+    $('#hint', el).textContent = got.length ? `Erkannt: ${got.join(' · ')}` : TIP;
     draw();
   };
   input.addEventListener('input', applyParsed);
 
-  dyn.addEventListener('click', (e) => {
+  el.addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
+    if ('si' in b.dataset) { f.steps[+b.dataset.si].done = !f.steps[+b.dataset.si].done; haptic(); drawSteps(); return; }
+    if ('sd' in b.dataset) { f.steps.splice(+b.dataset.sd, 1); drawSteps(); return; }
+    if (!dyn.contains(b)) return;
     if ('dur' in b.dataset) { f.dur = +b.dataset.dur; manual.dur = true; }
+    else if ('step' in b.dataset) {
+      const dir = +b.dataset.step;
+      const size = (dir > 0 ? f.dur >= 60 : f.dur > 60) ? 15 : 5;
+      f.dur = Math.max(5, Math.min(720, f.dur + dir * size)); manual.dur = true;
+    }
     else if ('day' in b.dataset) { f.day = b.dataset.day || null; manual.day = true; if (!f.day) f.repeat = null; }
     else if ('imp' in b.dataset) { f.important = !f.important; manual.important = true; }
-    else if ('clr' in b.dataset) { f.fixed = null; manual.fixed = true; e.preventDefault(); }
+    else if ('clr' in b.dataset) { f[b.dataset.clr] = null; manual[b.dataset.clr] = true; e.preventDefault(); }
     else if ('rep' in b.dataset) {
       const seq = [null, 'daily', 'weekdays', 'weekly'];
       f.repeat = seq[(seq.indexOf(f.repeat) + 1) % seq.length];
@@ -477,41 +584,82 @@ function openTaskSheet(task) {
       f.day = i.value < today ? today : i.value; manual.day = true;
       i.closest('.chip').classList.add('on'); i.previousElementSibling.textContent = `${weekdayShort(f.day)} ${dateShort(f.day)}`;
     }
+    if (i.name === 'due') {
+      f.due = i.value || null; manual.due = true;
+      i.closest('.chip').classList.toggle('on', !!f.due); i.previousElementSibling.textContent = f.due ? `bis ${weekdayShort(f.due)} ${dateShort(f.due)}` : 'Frist';
+    }
   });
-  dyn.addEventListener('focusout', (e) => { if (e.target.name === 'time' || e.target.name === 'date') setTimeout(draw, 0); });
+  dyn.addEventListener('focusout', (e) => { if (['time', 'date', 'due'].includes(e.target.name)) setTimeout(draw, 0); });
+  // Felder weiter unten im Blatt über die Tastatur holen
+  el.addEventListener('focusin', (e) => { if (['step', 'note'].includes(e.target.name)) setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 320); });
 
   let handled = false;
-  const finish = () => {
-    if (handled) return true;
+  const addOne = () => {
     const raw = input.value.trim();
-    if (editing) {
-      handled = true;
-      saveEdit(task.id, { ...f, title: raw || task.title });
-      return true;
-    }
     const p = parseSmart(raw);
     const title = p.title || raw;
-    if (!title) { input.focus(); return false; }
-    handled = true;
+    if (!title) return false;
     S.addTask({ ...f, title });
     haptic();
-    const where = f.day == null ? 'im Eingang' : f.day === today ? 'für heute' : `für ${dayLabel(f.day).toLowerCase() === 'morgen' ? 'morgen' : weekdayLong(f.day)}`;
-    toast(`Notiert ${where}`);
+    const where = f.day == null ? 'im Eingang' : f.day === today ? 'für heute' : `für ${f.day === tomorrow ? 'morgen' : weekdayLong(f.day)}`;
+    const plan = f.day ? S.schedule(f.day) : null;
+    toast(plan && plan.slack < 0 ? `Notiert – ${dayLabel(f.day)} ist jetzt ${fmtDur(-plan.slack)} zu voll` : `Notiert ${where}`);
+    return true;
+  };
+  const finish = () => {
+    if (handled) return true;
+    if (editing) {
+      handled = true;
+      takeStep();
+      saveEdit(task.id, { ...f, title: input.value.trim() || task.title, note: $('[name=note]', el).value.trim() });
+      return true;
+    }
+    if (!addOne()) { input.focus(); return false; }
+    handled = true;
     return true;
   };
   const sheet = mount(el, { onClose: () => { if (editing) finish(); } });
   el.addEventListener('submit', (e) => { e.preventDefault(); if (finish()) sheet.close(true); });
+  el.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    if (e.target.name === 'step') { e.preventDefault(); takeStep(); return; }
+    if (e.target === input && !editing) {
+      // Enter notiert und lässt das Blatt offen – praktisch, um mehrere Dinge hintereinander loszuwerden
+      e.preventDefault();
+      if (!input.value.trim()) { sheet.close(true); return; }
+      if (!addOne()) return;
+      const day = manual.day ? f.day : blank().day;
+      f = { ...blank(), day }; base = { ...f }; manual = manual.day ? { day: true } : {};
+      input.value = '';
+      $('#hint', el).textContent = 'Notiert. Gleich die nächste – oder leer bestätigen zum Schließen.';
+      draw();
+    }
+  });
   el.addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (!a) return;
     if (a === 'del') {
       handled = true;
-      const snap = structuredClone(S.byId(task.id));
-      S.removeTask(task.id);
       sheet.close(true);
-      toast('Gelöscht', () => S.restoreTask(snap));
+      const kill = () => { const snap = structuredClone(S.byId(task.id)); S.removeTask(task.id); toast('Gelöscht', () => S.restoreTask(snap)); };
+      if (task.routineId && S.repeatOf(task)) {
+        choose({ title: 'Wiederholende Aufgabe', text: `„${esc(task.title)}“ kommt regelmäßig wieder.`, options: [
+          { label: 'Nur dieses Mal löschen', run: kill },
+          { label: 'Ganze Serie beenden', cls: 'danger', run: () => { S.removeRoutine(task.routineId); toast('Serie beendet'); } },
+          { label: 'Abbrechen', cls: 'text' },
+        ] });
+      } else kill();
     }
     if (a === 'next') { finish(); S.makeNext(task.id); sheet.close(true); toast('Kommt als Nächstes dran'); }
+    if (a === 'last') { finish(); S.makeLast(task.id); sheet.close(true); toast('Ans Ende gestellt'); }
+    if (a === 'start') {
+      finish(); sheet.close(true);
+      armAudio();
+      if (S.byId(task.id)?.day !== today) S.moveTask(task.id, today, { top: true });
+      S.startFocus(task.id);
+      ui.tab = 'day'; ui.day = today; render();
+      openFocus();
+    }
   });
   if (!editing) input.focus();
 }
@@ -520,7 +668,8 @@ function saveEdit(id, f) {
   const task = S.byId(id);
   if (!task) return;
   const patch = {};
-  for (const k of ['title', 'dur', 'fixed', 'important']) if (f[k] !== task[k]) patch[k] = f[k];
+  for (const k of ['title', 'dur', 'fixed', 'important', 'due', 'note']) if (f[k] !== (task[k] ?? (k === 'note' ? '' : null))) patch[k] = f[k];
+  if (JSON.stringify(f.steps) !== JSON.stringify(task.steps || [])) patch.steps = f.steps;
   if (f.repeat !== S.repeatOf(task)) patch.repeat = f.repeat;
   if (Object.keys(patch).length) S.updateTask(id, patch);
   if (f.day !== task.day) {
@@ -538,7 +687,7 @@ function postpone(id, day) {
   if ((t.moved || 0) >= 2) return honesty(t, day);
   const snap = structuredClone(t);
   S.moveTask(id, day, { counts: true });
-  toast(`Verschoben ${whereLabel(day)}`, () => S.restoreTask(snap));
+  toast(t.due && day && day > t.due ? 'Verschoben – liegt jetzt nach der Frist' : `Verschoben ${whereLabel(day)}`, () => S.restoreTask(snap));
 }
 
 /* ---------- Der ehrliche Moment: schon mehrfach verschoben ---------- */
@@ -591,7 +740,9 @@ function openDeck(cfg) {
   let phase = cfg.intro ? 'intro' : queue.length ? 'cards' : 'outro';
   let busy = false;
   let outro = null;
-  el.innerHTML = `<div class="flow-h"><button class="icon-btn" data-a="close" aria-label="Schließen">${icon('x')}</button><div><h2>${cfg.title}</h2><p class="cnt"></p></div></div>
+  const history = [];
+  el.innerHTML = `<div class="flow-h"><button class="icon-btn" data-a="close" aria-label="Schließen">${icon('x')}</button><div><h2>${cfg.title}</h2><p class="cnt"></p></div>
+      <span class="spacer"></span><button class="icon-btn" data-a="undo" aria-label="Letzte Entscheidung zurücknehmen" hidden>${icon('back')}</button></div>
     <div class="cap" ${cfg.capDay ? '' : 'hidden'}></div><div class="stage"></div><div class="foot-slot"></div>`;
   const stage = $('.stage', el), foot = $('.foot-slot', el), cnt = $('.cnt', el), cap = $('.cap', el);
 
@@ -605,6 +756,7 @@ function openDeck(cfg) {
 
   function draw() {
     if (cfg.capDay) cap.innerHTML = capacityHtml(cfg.capDay);
+    $('[data-a=undo]', el).hidden = !history.length || phase === 'intro';
     if (phase === 'intro') {
       cnt.textContent = '';
       stage.innerHTML = `<div class="panel">${cfg.intro.html}</div>`;
@@ -636,6 +788,7 @@ function openDeck(cfg) {
     const tx = dir === 'right' ? 460 : dir === 'left' ? -460 : 0;
     card.style.transform = dir === 'del' ? 'translateY(120px) scale(.7)' : `translate(${tx}px, ${fromX ? 30 : 60}px) rotate(${tx / 22}deg)`;
     card.style.opacity = '0';
+    history.push(JSON.stringify({ tasks: S.state.tasks, slips: S.state.slips }));
     if (dir === 'del') S.removeTask(t.id); else cfg[dir].run(t);
     idx++;
     setTimeout(() => { busy = false; if (idx >= queue.length) phase = 'outro'; draw(); }, 260);
@@ -669,6 +822,12 @@ function openDeck(cfg) {
     if (!b) return;
     const a = b.dataset.a;
     if (a === 'close') flow.close();
+    else if (a === 'undo') {
+      if (busy || !history.length) return;
+      const snap = JSON.parse(history.pop());
+      S.commit((st) => { st.tasks = snap.tasks; st.slips = snap.slips; });
+      idx--; phase = 'cards'; cap.hidden = !cfg.capDay; haptic(); draw();
+    }
     else if (a === 'go') { phase = queue.length ? 'cards' : 'outro'; draw(); }
     else if (a === 'out') { const btn = outro.buttons[+b.dataset.i]; flow.close(); btn.run?.(); }
     else decide(a);
@@ -683,6 +842,7 @@ function openPlan(day, { onlyLeft = false } = {}) {
   const lbl = dayLabel(day, today);
   const tasks = [...S.leftovers(today), ...(onlyLeft ? [] : S.inbox())];
   if (!tasks.length) { toast('Nichts zu verteilen'); return; }
+  if (!onlyLeft && day === today) S.commit((st) => { st.planned[today] = true; }, { animate: false });
   openDeck({
     title: onlyLeft ? 'Liegen geblieben' : `${lbl} planen`,
     tasks, capDay: day,
@@ -697,6 +857,23 @@ function openPlan(day, { onlyLeft = false } = {}) {
           ${p.slack < 0 ? `<p><b>Achtung:</b> Das sind ${fmtDur(-p.slack)} mehr, als der Tag hergibt. Lieber noch etwas streichen.</p>` : ''}`,
         buttons: [{ label: day === today ? 'Los geht’s' : 'Passt', main: true, run: () => { ui.tab = 'day'; ui.day = day; render(); scrollTo({ top: 0 }); } }],
       };
+    },
+  });
+}
+
+function openDue() {
+  const today = dayKey();
+  const tasks = S.dueRisk(today);
+  if (!tasks.length) return;
+  openDeck({
+    title: 'Fristen',
+    tasks, capDay: today,
+    right: { label: 'Heute', run: (t) => S.moveTask(t.id, today, { counts: !!t.day && t.day < today, top: true }) },
+    left: { label: 'Nicht heute', run: () => {} },
+    outro: () => {
+      const rest = S.dueRisk(today).length;
+      return { html: rest ? `<h3>${plural(rest, 'Frist bleibt', 'Fristen bleiben')} offen.</h3><p>Du hast dich bewusst dagegen entschieden. Die Erinnerung bleibt stehen, bis es eingeplant, erledigt oder gestrichen ist.</p>` : '<h3>Alle Fristen im Griff.</h3><p>Die fälligen Aufgaben stehen heute ganz oben.</p>',
+        buttons: [{ label: 'Weiter', main: true, run: () => { ui.tab = 'day'; ui.day = today; render(); } }] };
     },
   });
 }
@@ -778,6 +955,7 @@ function openFocus() {
   el.setAttribute('role', 'dialog');
   el.innerHTML = `<div class="focus-top"><button class="icon-btn" data-a="min" aria-label="Verkleinern">${icon('chevD')}</button><span class="eyebrow">Fokus</span><button class="icon-btn" data-a="stop" aria-label="Timer beenden">${icon('x')}</button></div>
     <h2>${esc(t.title)}</h2>
+    <div class="f-steps">${stepsHtml(t, 'data-a="step"')}</div>
     <div class="ring"><svg viewBox="0 0 260 260"><circle class="track" cx="130" cy="130" r="120"/><circle class="prog" cx="130" cy="130" r="120" stroke-dasharray="${RING.toFixed(1)}" stroke-dashoffset="${RING.toFixed(1)}"/></svg>
       <div class="ring-in"><b id="fTime"></b><span id="fSub"></span></div></div>
     <div class="focus-btns"><button class="btn" data-a="more">+5 Min</button><button class="btn" data-a="pause" id="fPause"></button></div>
@@ -786,6 +964,7 @@ function openFocus() {
   el.addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (!a) return;
+    if (a === 'step') { const b = e.target.closest('[data-a]'); S.toggleStep(b.dataset.id, +b.dataset.i); haptic(); $('.f-steps', el).innerHTML = stepsHtml(S.byId(b.dataset.id), 'data-a="step"'); return; }
     if (a === 'min') focusUI.close();
     if (a === 'stop') { S.stopFocus(); focusUI?.close(); toast('Timer beendet'); }
     if (a === 'more') { S.extendFocus(5); haptic(); tickSecond(); }
@@ -820,7 +999,17 @@ function tickSecond() {
 /* ============================================================
    Rückblick & Einstellungen
    ============================================================ */
-function openMore() {
+const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WD_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+function daysText(days) {
+  const d = WD_ORDER.filter((x) => days.includes(x));
+  if (d.length === 7) return 'täglich';
+  if (d.join() === '1,2,3,4,5') return 'Mo–Fr';
+  if (d.join() === '6,0') return 'Sa, So';
+  return d.map((x) => WD_SHORT[x]).join(', ');
+}
+
+function openMore(scrollTo) {
   const el = document.createElement('div');
   el.className = 'sheet';
   el.setAttribute('role', 'dialog');
@@ -829,22 +1018,31 @@ function openMore() {
     const s = S.state.settings;
     const max = Math.max(1, ...st.days.map((d) => d.done));
     const sel = st.days[ui.barSel];
+    const estTxt = st.est == null ? '–' : st.est > 4 ? `+${st.est} %` : st.est < -4 ? `${st.est} %` : '±0';
+    const estSub = st.est == null ? 'Schätzung: noch zu wenig Timer-Daten' : st.est > 4 ? 'länger als geschätzt' : st.est < -4 ? 'schneller als geschätzt' : 'Schätzung passt';
+    const keep = el.scrollTop;
     el.innerHTML = `<div class="grabber"></div>
       <div class="sheet-h"><h2>Rückblick</h2><button class="icon-btn" data-a="close" aria-label="Schließen">${icon('x')}</button></div>
       <div class="tiles">
         <div class="tile"><b>${st.streak}</b><span>${st.streak === 1 ? 'Tag' : 'Tage'} in Folge aktiv</span></div>
-        <div class="tile"><b>${st.week}</b><span>erledigt in 7 Tagen</span></div>
-        <div class="tile"><b>${st.stuck}</b><span>mehrfach verschoben</span></div>
+        <div class="tile"><b>${st.rate == null ? '–' : `${st.rate} %`}</b><span>${st.rate == null ? 'erledigt statt verschoben' : `erledigt, ${st.slipped}× verschoben`}</span></div>
+        <div class="tile"><b>${estTxt}</b><span>${estSub}</span></div>
       </div>
       <div class="chart" role="group" aria-label="Erledigte Aufgaben der letzten 7 Tage">
         <div class="chart-h"><span>Erledigt pro Tag</span><span><b>${sel.done}</b> · ${dayLabel(sel.day)}${sel.day === dayKey() ? '' : `, ${dateShort(sel.day)}`}</span></div>
         <div class="bars">${st.days.map((d, i) => `<button class="bar-slot ${i === ui.barSel ? 'sel' : ''} ${d.done ? '' : 'zero'}" data-bar="${i}" aria-label="${weekdayLong(d.day)}: ${d.done} erledigt"><i style="height:${Math.round((d.done / max) * 88)}%"></i></button>`).join('')}</div>
         <div class="bar-x">${st.days.map((d, i) => `<span class="${i === ui.barSel ? 'sel' : ''}">${weekdayShort(d.day)}</span>`).join('')}</div>
       </div>
+      ${st.stuck.length ? `<div class="group-h">Schiebst du vor dir her</div><div class="mini">${st.stuck.slice(0, 3).map((t) => `<button data-task="${t.id}"><span>${esc(t.title)}</span><b>${t.moved}×</b></button>`).join('')}</div>` : ''}
+
+      <div class="group-h" id="blocksH">Belegte Zeiten</div>
+      <div class="mini">${S.state.blocks.map((b) => `<button data-block="${b.id}"><span>${esc(b.name)}<small>${daysText(b.days)} · ${fmtTime(b.start)}–${fmtTime(b.end)}</small></span>${icon('chevR')}</button>`).join('')}
+        <button data-block="new" class="add-line">${icon('plus')}<span>Arbeit, Uni, Pause … hinzufügen</span></button></div>
 
       <div class="group-h">Dein Tag</div>
       <div class="set-row"><span>Beginnt um</span><input type="time" name="dayStart" value="${fmtTime(s.dayStart)}"></div>
       <div class="set-row"><span>Endet um</span><input type="time" name="dayEnd" value="${fmtTime(s.dayEnd)}"></div>
+      <div class="set-row"><span>Puffer zwischen Aufgaben</span><div class="seg">${[0, 5, 10, 15].map((k) => `<button data-buffer="${k}" class="${(s.buffer || 0) === k ? 'on' : ''}">${k || 'aus'}</button>`).join('')}</div></div>
       <div class="set-row"><span>Darstellung</span><div class="seg">${[['auto', 'Tageszeit'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([k, l]) => `<button data-theme-set="${k}" class="${s.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
 
       <div class="group-h">Daten</div>
@@ -852,14 +1050,22 @@ function openMore() {
       <button class="btn text wide" data-a="reset" style="color:var(--warn)">Alles löschen</button>
       <input type="file" accept="application/json,.json" hidden>
       <p class="fine">Deine Aufgaben liegen nur auf diesem Gerät. Eine Sicherung ab und zu schadet nicht.${S.isStorageOk() ? '' : ' <b>Achtung: Speichern ist gerade nicht möglich.</b>'}</p>`;
+    el.scrollTop = keep;
   }
   draw();
   const sheet = mount(el);
+  if (scrollTo) setTimeout(() => $(scrollTo, el)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 420);
   el.addEventListener('click', async (e) => {
     const bar = e.target.closest('[data-bar]');
     if (bar) { ui.barSel = +bar.dataset.bar; draw(); return; }
     const th = e.target.closest('[data-theme-set]');
     if (th) { S.commit((s) => { s.settings.theme = th.dataset.themeSet; }); draw(); return; }
+    const bf = e.target.closest('[data-buffer]');
+    if (bf) { S.commit((s) => { s.settings.buffer = +bf.dataset.buffer; }); draw(); return; }
+    const bl = e.target.closest('[data-block]');
+    if (bl) { openBlockEditor(S.state.blocks.find((b) => b.id === bl.dataset.block) || null, draw); return; }
+    const tk = e.target.closest('[data-task]');
+    if (tk) { sheet.close(); const t = S.byId(tk.dataset.task); if (t) setTimeout(() => openTaskSheet(t), 200); return; }
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'close') sheet.close();
     if (a === 'export') exportBackup();
@@ -877,9 +1083,73 @@ function openMore() {
       if (v == null) return;
       const s = S.state.settings;
       const start = i.name === 'dayStart' ? v : s.dayStart, end = i.name === 'dayEnd' ? v : s.dayEnd;
-      if (end - start < 120) { toast('Dein Tag braucht mindestens 2 Stunden'); i.value = fmtTime(s[i.name]); return; }
+      if (end - start < 120) { toast(end < start ? 'Das Tagesende muss vor Mitternacht liegen' : 'Dein Tag braucht mindestens 2 Stunden'); i.value = fmtTime(s[i.name]); return; }
       S.commit((st) => { st.settings.dayStart = start; st.settings.dayEnd = end; });
     }
+  });
+}
+
+function openBlockEditor(block, onDone) {
+  const b = block ? { ...block, days: [...block.days] } : { name: '', start: 9 * 60, end: 17 * 60, days: [1, 2, 3, 4, 5] };
+  const el = document.createElement('div');
+  el.className = 'dialog form';
+  el.setAttribute('role', 'dialog');
+  const daysHtml = () => WD_ORDER.map((wd) => `<button type="button" class="daychip ${b.days.includes(wd) ? 'on' : ''}" data-wd="${wd}">${WD_SHORT[wd]}</button>`).join('');
+  el.innerHTML = `<h3>Belegte Zeit</h3><p>In dieser Zeit plant Tagwerk nichts ein.</p>
+    <input class="line-in" name="name" type="text" autocomplete="off" placeholder="z. B. Arbeit, Uni, Mittagspause" value="${esc(b.name)}">
+    <div class="set-row"><span>Von</span><input type="time" name="start" value="${fmtTime(b.start)}"></div>
+    <div class="set-row"><span>Bis</span><input type="time" name="end" value="${fmtTime(b.end)}"></div>
+    <div class="days">${daysHtml()}</div>
+    <button class="btn" data-a="save">Speichern</button>
+    ${block ? '<button class="btn text" data-a="del" style="color:var(--warn)">Löschen</button>' : '<button class="btn text" data-a="cancel">Abbrechen</button>'}`;
+  const d = mount(el, { high: true });
+  el.addEventListener('click', (e) => {
+    const wd = e.target.closest('[data-wd]');
+    if (wd) { const n = +wd.dataset.wd; b.days = b.days.includes(n) ? b.days.filter((x) => x !== n) : [...b.days, n]; $('.days', el).innerHTML = daysHtml(); return; }
+    const a = e.target.closest('[data-a]')?.dataset.a;
+    if (!a) return;
+    if (a === 'save') {
+      const start = S.parseTime($('[name=start]', el).value), end = S.parseTime($('[name=end]', el).value);
+      if (start == null || end == null || end - start < 5) { toast('Das Ende muss nach dem Anfang liegen'); return; }
+      if (!b.days.length) { toast('Mindestens einen Wochentag wählen'); return; }
+      S.saveBlock({ ...b, name: $('[name=name]', el).value.trim() || 'Belegt', start, end });
+      S.commit((s) => { s.settings.blockHint = true; }, { animate: false });
+    }
+    if (a === 'del') S.removeBlock(b.id);
+    d.close();
+    onDone?.();
+  });
+}
+
+/* ---------- Wochenübersicht: die nächsten 14 Tage auf einen Blick ---------- */
+function openWeek() {
+  const today = dayKey();
+  const el = document.createElement('div');
+  el.className = 'sheet';
+  el.setAttribute('role', 'dialog');
+  let rows = '';
+  for (let i = 0; i < 14; i++) {
+    const day = addDays(today, i);
+    S.materialize(day);
+    const p = S.schedule(day);
+    const n = p.items.length;
+    const over = n && p.slack < 0;
+    const pct = p.available ? Math.min(100, (p.planned / p.available) * 100) : (n ? 100 : 0);
+    const dues = S.state.tasks.filter((t) => t.due === day && !t.done && !t.gone).length;
+    const info = n ? `${plural(n, 'Aufgabe', 'Aufgaben')} · ${fmtDur(p.planned)}${over ? ` · ${fmtDur(-p.slack)} zu viel` : ''}` : 'frei';
+    const titles = p.items.slice(0, 3).map((x) => esc(x.task.title)).join(' · ');
+    rows += `<button class="wk ${day === ui.day ? 'cur' : ''}" data-day="${day}">
+      <span class="wk-d"><b>${i < 2 ? dayLabel(day, today) : weekdayLong(day)}</b><small>${dateShort(day)}</small></span>
+      <span class="wk-m"><span class="wk-bar ${over ? 'over' : ''}"><i style="width:${pct}%"></i></span><small>${over ? icon('warn') : ''}${info}</small>${titles ? `<small class="wk-t">${titles}${n > 3 ? ' …' : ''}</small>` : ''}</span>
+      ${dues ? `<span class="wk-due">${icon('flag')}${dues}</span>` : ''}</button>`;
+  }
+  el.innerHTML = `<div class="grabber"></div><div class="sheet-h"><h2>Die nächsten Tage</h2><button class="icon-btn" data-a="close" aria-label="Schließen">${icon('x')}</button></div>
+    <div class="wk-list">${rows}</div><p class="fine">Balken: verplante Zeit im Verhältnis zur freien Zeit des Tages. Fähnchen: Fristen an diesem Tag.</p>`;
+  const sheet = mount(el);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-a=close]')) { sheet.close(); return; }
+    const b = e.target.closest('[data-day]');
+    if (b) { sheet.close(); ui.tab = 'day'; setDay(b.dataset.day); scrollTo({ top: 0 }); }
   });
 }
 
@@ -949,6 +1219,16 @@ const actions = {
   'plan-today': () => openPlan(dayKey()),
   'decide-left': () => openPlan(dayKey(), { onlyLeft: true }),
   'decide-late': () => openLate(),
+  'decide-due': () => openDue(),
+  step: (id, b) => { S.toggleStep(id, +b.dataset.i); haptic(); },
+  'skip-plan': () => S.commit((s) => { s.planned[dayKey()] = true; }),
+  blocks: () => openMore('#blocksH'),
+  'dismiss-blockhint': () => S.commit((s) => { s.settings.blockHint = true; }),
+  'skip-block': (id) => {
+    const day = ui.day, name = S.state.blocks.find((b) => b.id === id)?.name || 'Belegte Zeit';
+    S.skipBlock(day, id);
+    toast(`${name}: ${day === dayKey() ? 'heute' : 'an diesem Tag'} frei`, () => S.skipBlock(day, id, false));
+  },
   'close-day': () => openCloseDay(),
   'toggle-done': () => { ui.doneOpen = !ui.doneOpen; render(); },
   'goto-tomorrow': () => { ui.day = addDays(dayKey(), 1); render({ animate: true }); scrollTo({ top: 0 }); },
@@ -978,8 +1258,8 @@ function setDay(day) {
 $('#prevDay').addEventListener('click', () => setDay(addDays(ui.day, -1)));
 $('#nextDay').addEventListener('click', () => setDay(addDays(ui.day, 1)));
 $('#todayBtn').addEventListener('click', () => setDay(dayKey()));
-$('#dayLabel').addEventListener('click', () => setDay(ui.day === dayKey() ? addDays(dayKey(), 1) : dayKey()));
-$('#moreBtn').addEventListener('click', openMore);
+$('#dayLabel').addEventListener('click', openWeek);
+$('#moreBtn').addEventListener('click', () => openMore());
 $('#addBtn').addEventListener('click', () => { haptic(); openTaskSheet(null); });
 $('#tabDay').addEventListener('click', () => { if (ui.tab === 'day') ui.day = dayKey(); ui.tab = 'day'; render({ animate: true }); scrollTo({ top: 0 }); });
 $('#tabInbox').addEventListener('click', () => { ui.tab = 'inbox'; render({ animate: true }); scrollTo({ top: 0 }); });
@@ -1078,8 +1358,12 @@ addEventListener('scroll', () => {
 /* ---------- Tastatur: sichtbare Höhe mitführen, damit nichts dahinter verschwindet ---------- */
 const vv = window.visualViewport;
 if (vv) {
-  const sync = () => root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+  const sync = () => {
+    root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))}px`);
+  };
   vv.addEventListener('resize', sync);
+  vv.addEventListener('scroll', sync);
   sync();
 }
 

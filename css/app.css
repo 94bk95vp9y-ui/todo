@@ -446,3 +446,93 @@ svg.i.fill { fill: currentColor; stroke: none; }
   .dcard { min-height: 200px; }
   .panel .big { font-size: 64px; }
 }
+
+/* ============ Erweiterungen: Schritte, belegte Zeiten, Fristen, Woche ============ */
+.day-label svg.i { width: 13px; height: 13px; stroke-width: 2.6; display: inline-block; vertical-align: -1px; margin-left: 3px; opacity: .75; }
+
+/* Schritte in der Jetzt-Karte und im Fokus */
+.steps { list-style: none; margin: 12px 0 0; padding: 0; position: relative; z-index: 1; }
+.steps button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 6px 0; font: 550 15px/1.25 var(--body); min-height: 34px; }
+.steps i { width: 20px; height: 20px; border-radius: 7px; border: 2px solid currentColor; opacity: .6; flex: none; display: grid; place-items: center; }
+.steps i svg { width: 12px; height: 12px; stroke-width: 3.4; opacity: 0; }
+.steps .d i { background: currentColor; opacity: .85; }
+.steps .d i svg { opacity: 1; color: var(--sun-a); }
+.steps .d span { text-decoration: line-through; opacity: .55; }
+.f-steps { max-height: 22dvh; overflow-y: auto; text-align: left; }
+.f-steps .steps { margin: 14px auto 0; max-width: 300px; }
+.f-steps .steps .d i svg { color: #2a2a66; }
+
+/* Belegte Zeit in der Liste */
+.blk { display: grid; grid-template-columns: 46px 1fr; gap: 10px; margin-bottom: 8px; }
+.blk .when b { color: var(--ink-2); }
+.blk-body { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 4px 6px 4px 16px; border-radius: 16px; color: var(--ink-2); font: 600 14.5px var(--body);
+  background: repeating-linear-gradient(-45deg, var(--chip) 0 8px, transparent 8px 16px); border: 1px solid var(--line); }
+.blk-body button { height: 32px; padding: 0 12px; border-radius: 99px; background: var(--bg); font: 650 12.5px var(--body); color: var(--ink-2); box-shadow: 0 0 0 1px var(--line); white-space: nowrap; }
+.list.pre { margin: 0 0 10px; }
+.banner + .list.pre { margin-top: 12px; }
+.banner .btn-s + .x { margin-left: -6px; }
+
+/* Aufgaben-Blatt: Dauer-Regler, Schritte, Notiz */
+.lbl.split { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.stepper { display: inline-flex; align-items: center; gap: 2px; text-transform: none; letter-spacing: 0; }
+.stepper b { min-width: 68px; text-align: center; font: 650 15px var(--body); color: var(--ink); font-variant-numeric: tabular-nums; }
+.stepper button { width: 34px; height: 30px; border-radius: 10px; background: var(--chip); color: var(--ink); font: 600 19px/1 var(--body); }
+.stepper button:active { background: var(--ink); color: var(--bg); }
+.line-in { width: 100%; border: 0; outline: 0; background: var(--chip); border-radius: 14px; padding: 11px 14px; font: 500 16px/1.35 var(--body); color: var(--ink); resize: none; display: block; -webkit-appearance: none; appearance: none; }
+.line-in::placeholder { color: var(--ink-3); }
+.step-edit { list-style: none; margin: 0 0 6px; padding: 0; }
+.step-edit:empty { display: none; }
+.step-edit li { display: flex; align-items: center; gap: 4px; min-height: 40px; }
+.step-edit span { flex: 1; font: 500 15.5px/1.3 var(--body); overflow-wrap: anywhere; }
+.step-edit .d span { text-decoration: line-through; color: var(--ink-3); }
+.sbox { width: 36px; height: 36px; display: grid; place-items: center; flex: none; }
+.sbox::before { content: ''; width: 20px; height: 20px; border-radius: 7px; border: 2px solid var(--ink-3); grid-area: 1 / 1; }
+.sbox svg { grid-area: 1 / 1; width: 12px; height: 12px; stroke-width: 3.4; opacity: 0; color: var(--bg); }
+.d .sbox::before { background: var(--good); border-color: var(--good); }
+.d .sbox svg { opacity: 1; }
+.sdel { width: 36px; height: 36px; display: grid; place-items: center; color: var(--ink-3); flex: none; }
+.sdel svg.i { width: 14px; height: 14px; }
+.quick .icon-only { flex: none; width: 50px; padding: 0; }
+.sheet:not(.top) { bottom: var(--kb, 0px); max-height: calc(var(--vvh, 100dvh) - var(--safe-t) - 24px); }
+.flow-h .spacer { flex: 1; }
+
+/* Listen im Rückblick: Verschobenes, belegte Zeiten */
+.mini { background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+.mini button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; padding: 12px 14px 12px 16px; border-bottom: 1px solid var(--line); font: 550 15.5px/1.25 var(--body); min-height: 50px; }
+.mini button:last-child { border-bottom: 0; }
+.mini span { min-width: 0; overflow-wrap: anywhere; }
+.mini small { display: block; font: 500 12.5px var(--body); color: var(--ink-2); margin-top: 2px; }
+.mini b { color: var(--warn); font-weight: 700; flex: none; }
+.mini svg.i { width: 16px; height: 16px; color: var(--ink-3); }
+.mini .add-line { justify-content: flex-start; color: var(--ink-2); font-weight: 600; }
+.mini .add-line svg.i { color: currentColor; width: 18px; height: 18px; }
+.tile b { font-size: 24px; white-space: nowrap; }
+.set-row .seg button { padding: 0 12px; }
+
+/* Dialog mit Formular (belegte Zeit) */
+.dialog.form { text-align: left; padding-top: 20px; }
+.dialog.form h3 { margin-top: 0; }
+.dialog.form p { margin: 4px 0 14px; }
+.dialog.form .line-in { margin-bottom: 4px; }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin: 14px 0 8px; }
+.daychip { height: 40px; border-radius: 12px; background: var(--chip); font: 650 13.5px var(--body); color: var(--ink-2); }
+.daychip.on { background: var(--ink); color: var(--bg); }
+
+/* Wochenübersicht */
+.wk-list { background: var(--card); border-radius: 20px; box-shadow: var(--shadow); overflow: hidden; }
+.wk { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px 14px 12px 16px; border-bottom: 1px solid var(--line); min-height: 60px; }
+.wk:last-child { border-bottom: 0; }
+.wk.cur { background: var(--tint); }
+.wk:active { background: var(--chip); }
+.wk-d b { display: block; font: 650 15px/1.2 var(--body); }
+.wk-d small, .wk-m small { display: block; font: 500 12.5px/1.3 var(--body); color: var(--ink-2); }
+.wk-m { min-width: 0; }
+.wk-m small { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
+.wk-m small svg.i { width: 13px; height: 13px; color: var(--warn); }
+.wk-m .wk-t { display: block; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.wk-bar { display: block; height: 6px; border-radius: 6px; background: var(--chip); overflow: hidden; }
+.wk-bar i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+.wk-bar.over i { background: var(--warn); }
+.wk-due { display: inline-flex; align-items: center; gap: 3px; font: 700 12.5px var(--body); color: var(--warn); }
+.wk-due svg.i { width: 15px; height: 15px; }
+.blk .when span { white-space: nowrap; }

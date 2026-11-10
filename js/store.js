@@ -35,9 +35,13 @@ const fresh = () => ({
   v: 1,
   tasks: [],
   routines: [],
-  settings: { dayStart: 7 * 60, dayEnd: 22 * 60, theme: 'auto', onboarded: false, hintDismissed: false },
+  settings: { dayStart: 7 * 60, dayEnd: 22 * 60, theme: 'auto', onboarded: false, hintDismissed: false, buffer: 5, blockHint: false },
   focus: null,
   closed: {},
+  blocks: [], // belegte Zeiten: { id, name, start, end, days: [0–6] }
+  blockSkips: {}, // 'Tag:BlockId' → an diesem Tag ausgeblendet
+  slips: {}, // Tag → wie viele Aufgaben von diesem Tag weggeschoben wurden
+  planned: {}, // Tag → Morgenplanung erledigt
 });
 
 export let state = fresh();
@@ -75,8 +79,13 @@ export const uid = () => Date.now().toString(36) + Math.random().toString(36).sl
 /* ---------- Abfragen ---------- */
 export const byId = (id) => state.tasks.find((t) => t.id === id);
 export const tasksOf = (day) => state.tasks.filter((t) => t.day === day && !t.gone).sort((a, b) => a.order - b.order);
+const dueKey = (t) => t.due || '9999';
 export const inbox = () => state.tasks.filter((t) => t.day == null && !t.done && !t.gone)
-  .sort((a, b) => (b.important - a.important) || (b.moved - a.moved) || (a.created - b.created));
+  .sort((a, b) => (dueKey(a) < dueKey(b) ? -1 : dueKey(a) > dueKey(b) ? 1 : 0) || (b.important - a.important) || (b.moved - a.moved) || (a.created - b.created));
+/** Aufgaben, deren Frist heute/morgen abläuft (oder schon vorbei ist) und die nicht rechtzeitig eingeplant sind. */
+export const dueRisk = (today = dayKey()) => state.tasks
+  .filter((t) => t.due && !t.done && !t.gone && t.day !== today && (t.due < today || (t.due <= addDays(today, 1) && (t.day == null || t.day > t.due || t.day < today))))
+  .sort((a, b) => (a.due < b.due ? -1 : 1));
 /** Offene Aufgaben aus vergangenen Tagen (ohne Routinen – die verfallen). */
 export const leftovers = (today = dayKey()) => state.tasks
   .filter((t) => t.day && t.day < today && !t.done && !t.gone && !t.routineId)
@@ -91,6 +100,7 @@ export function addTask(data) {
     id: uid(), title: data.title.trim(), dur: data.dur || 30, day: data.day ?? null,
     fixed: data.fixed ?? null, important: !!data.important, done: false, doneAt: null, doneDay: null,
     order: 0, moved: 0, created: Date.now(), routineId: null,
+    due: data.due ?? null, note: data.note || '', steps: data.steps || [], spent: null,
   };
   t.order = t.important ? topOrder(t.day) : endOrder(t.day);
   commit((s) => {
@@ -132,6 +142,10 @@ export function updateTask(id, patch) {
   });
 }
 
+export function toggleStep(id, i) {
+  commit((s) => { const x = s.tasks.find((k) => k.id === id)?.steps?.[i]; if (x) x.done = !x.done; }, { animate: false });
+}
+
 export const repeatOf = (t) => (t.routineId && state.routines.find((r) => r.id === t.routineId)?.repeat) || null;
 
 export function setDone(id, done, now = new Date()) {
@@ -139,6 +153,9 @@ export function setDone(id, done, now = new Date()) {
     const t = s.tasks.find((x) => x.id === id);
     if (!t) return;
     t.done = done;
+    const f = s.focus && s.focus.taskId === id ? s.focus : null;
+    if (done && f) t.spent = Math.max(1, Math.round(((f.pausedAt || now.getTime()) - f.startedAt - f.paused) / 60000)); // echte Dauer merken
+    if (!done) t.spent = null;
     t.doneAt = done ? now.getTime() : null;
     t.doneDay = done ? dayKey(now) : null;
     if (done && t.day !== dayKey(now)) {
@@ -172,7 +189,10 @@ export function moveTask(id, day, { counts = false, top = false } = {}) {
     const t = s.tasks.find((x) => x.id === id);
     if (!t) return;
     if (s.focus && s.focus.taskId === id) s.focus = null;
-    if (counts) t.moved = (t.moved || 0) + 1;
+    if (counts) {
+      t.moved = (t.moved || 0) + 1;
+      if (t.day) s.slips[t.day] = (s.slips[t.day] || 0) + 1;
+    }
     if (t.routineId && t.day !== day) { leaveGap(s, t); t.routineId = null; } // verschobene Routine-Kopie wird eine normale Aufgabe
     t.order = top ? topOrder(day) : endOrder(day);
     t.day = day;
@@ -183,6 +203,20 @@ export function moveTask(id, day, { counts = false, top = false } = {}) {
 function leaveGap(s, t) {
   if (!t.day) return;
   s.tasks.push({ id: uid(), title: t.title, dur: t.dur, day: t.day, fixed: null, important: false, done: false, doneAt: null, doneDay: null, order: 0, moved: 0, created: Date.now(), routineId: t.routineId, gone: true });
+}
+
+/** Ganze Serie beenden und ihre offenen Kopien entfernen. */
+export function removeRoutine(routineId) {
+  commit((s) => {
+    s.routines = s.routines.filter((r) => r.id !== routineId);
+    s.tasks = s.tasks.filter((t) => t.routineId !== routineId || t.done);
+    s.tasks.forEach((t) => { if (t.routineId === routineId) t.routineId = null; });
+    if (s.focus && !s.tasks.some((t) => t.id === s.focus.taskId)) s.focus = null;
+  });
+}
+
+export function makeLast(id) {
+  commit((s) => { const t = s.tasks.find((x) => x.id === id); if (t) t.order = endOrder(t.day); });
 }
 
 export function makeNext(id) {
@@ -230,6 +264,9 @@ export function housekeeping(now = new Date()) {
     return true;
   });
   for (const k of Object.keys(state.closed)) if (k < cutoff) delete state.closed[k];
+  for (const k of Object.keys(state.slips)) if (k < cutoff) delete state.slips[k];
+  for (const k of Object.keys(state.planned)) if (k < today) delete state.planned[k];
+  for (const k of Object.keys(state.blockSkips)) if (k.slice(0, 10) < today) delete state.blockSkips[k];
   if (state.focus && !state.tasks.some((t) => t.id === state.focus.taskId && !t.done)) state.focus = null;
   materialize(today);
   materialize(addDays(today, 1));
@@ -263,12 +300,32 @@ export function focusRemaining(now = Date.now()) {
 }
 export function focusTotal() { const f = state.focus; const t = f && byId(f.taskId); return t ? ((f.minutes ?? t.dur) + f.extra) * 60 : 0; }
 
+/* ---------- Belegte Zeiten (Arbeit, Uni, Mittagspause …) ---------- */
+export function blocksOf(day) {
+  const wd = parseDay(day).getDay();
+  return state.blocks
+    .filter((b) => b.days.includes(wd) && !state.blockSkips[`${day}:${b.id}`])
+    .map((b) => ({ id: b.id, name: b.name, start: b.start, end: b.end }))
+    .sort((x, y) => x.start - y.start);
+}
+export function saveBlock(block) {
+  commit((s) => {
+    const i = s.blocks.findIndex((b) => b.id === block.id);
+    if (i >= 0) s.blocks[i] = block; else s.blocks.push({ ...block, id: uid() });
+  });
+}
+export function removeBlock(id) { commit((s) => { s.blocks = s.blocks.filter((b) => b.id !== id); }); }
+export function skipBlock(day, id, skip = true) {
+  commit((s) => { if (skip) s.blockSkips[`${day}:${id}`] = true; else delete s.blockSkips[`${day}:${id}`]; });
+}
+
 /* ---------- Tagesplan: rechnet aus Reihenfolge + Dauer echte Uhrzeiten ---------- */
 export function schedule(day, now = new Date()) {
   const S = state.settings;
   const today = dayKey(now);
   const isToday = day === today;
   const nm = minutesOf(now);
+  const buffer = S.buffer || 0;
   const open = tasksOf(day).filter((t) => !t.done);
   const f = isToday && state.focus && open.find((t) => t.id === state.focus.taskId) ? state.focus : null;
 
@@ -287,40 +344,54 @@ export function schedule(day, now = new Date()) {
   rest.sort((a, b) => (isMissed(b) - isMissed(a)) || (a.order - b.order));
   anchors.sort((a, b) => a.fixed - b.fixed);
 
-  const items = [];
+  let blocks = blocksOf(day);
+  if (isToday) blocks = blocks.filter((b) => b.end > nm);
+
+  // alles, worum herum geplant wird: feste Termine und belegte Zeiten
+  const busy = [...anchors.map((a) => ({ s: a.fixed, e: a.fixed + a.dur })), ...blocks.map((b) => ({ s: b.start, e: b.end }))];
+  const nextFree = (c) => { for (let again = true; again;) { again = false; for (const b of busy) if (b.s <= c && c < b.e) { c = b.e; again = true; } } return c; };
+  const gapEnd = (c) => busy.reduce((m, b) => (b.s > c && b.s < m ? b.s : m), Infinity);
+
+  const items = anchors.map((a) => ({ task: a, start: a.fixed, end: a.fixed + a.dur, fixed: true }));
+  for (const it of items) it.conflict = items.some((o) => o !== it && o.start < it.end && it.start < o.end);
+
   if (f) {
     const t = open.find((x) => x.id === f.taskId);
     const rem = Math.max(60, focusRemaining(now.getTime()));
     const end = ceil5(nm + rem / 60);
     items.push({ task: t, start: nm, end, running: true });
-    cursor = end;
+    cursor = end + buffer;
   }
-  let ai = 0;
-  const putAnchor = (a) => {
-    items.push({ task: a, start: a.fixed, end: a.fixed + a.dur, fixed: true });
-    cursor = Math.max(cursor, a.fixed + a.dur);
-    ai++;
-  };
-  while (rest.length || ai < anchors.length) {
-    const a = anchors[ai];
-    if (a && a.fixed <= cursor) { putAnchor(a); continue; }
-    if (!rest.length) { putAnchor(a); continue; }
-    let idx = 0;
-    if (a) {
-      idx = rest.findIndex((t) => cursor + t.dur <= a.fixed); // passt noch etwas vor den Termin?
-      if (idx < 0) { putAnchor(a); continue; }
-    }
+  while (rest.length) {
+    cursor = nextFree(cursor);
+    const limit = gapEnd(cursor);
+    const idx = rest.findIndex((t) => cursor + t.dur <= limit); // passt noch etwas in die Lücke?
+    if (idx < 0) { cursor = limit; continue; }
     const t = rest.splice(idx, 1)[0];
     items.push({ task: t, start: cursor, end: cursor + t.dur, missed: t.fixed != null });
-    cursor += t.dur;
+    cursor += t.dur + buffer;
   }
-  items.sort((a, b) => a.start - b.start);
+  items.sort((a, b) => a.start - b.start || (a.running ? -1 : 1));
   for (const it of items) it.late = it.end > S.dayEnd;
 
   const planned = items.reduce((s, it) => s + (it.running ? it.end - it.start : it.task.dur), 0);
   const end = items.length ? Math.max(...items.map((i) => i.end)) : start0;
-  const available = Math.max(0, S.dayEnd - start0);
-  return { items, start0, end, planned, available, slack: S.dayEnd - end, late: items.filter((i) => i.late), isToday };
+  const blocked = blocks.reduce((s, b) => s + Math.max(0, Math.min(b.end, S.dayEnd) - Math.max(b.start, start0)), 0);
+  const available = Math.max(0, S.dayEnd - start0 - blocked);
+  return { items, blocks, start0, end, planned, available, slack: S.dayEnd - end, late: items.filter((i) => i.late), isToday };
+}
+
+/* ---------- Fristen ---------- */
+/** Text + Dringlichkeit für die Frist einer Aufgabe. */
+export function dueInfo(t, today = dayKey()) {
+  if (!t.due) return null;
+  const tomorrow = addDays(today, 1);
+  const misplaced = t.day && t.day > t.due;
+  if (t.due < today) return { label: 'Frist überschritten', warn: true };
+  if (t.due === today) return { label: 'heute fällig', warn: true };
+  if (t.due === tomorrow) return { label: 'morgen fällig', warn: true };
+  const days = Math.round((parseDay(t.due) - parseDay(today)) / 864e5);
+  return { label: `fällig ${days < 7 ? weekdayShort(t.due) : `${weekdayShort(t.due)} ${dateShort(t.due)}`}`, warn: misplaced };
 }
 
 /* ---------- Rückblick ---------- */
@@ -328,14 +399,20 @@ export function doneOn(day) { return state.tasks.filter((t) => t.done && t.doneD
 export function stats(now = new Date()) {
   const today = dayKey(now);
   const days = [];
-  for (let i = 6; i >= 0; i--) { const k = addDays(today, -i); days.push({ day: k, done: doneOn(k).length }); }
+  for (let i = 6; i >= 0; i--) { const k = addDays(today, -i); days.push({ day: k, done: doneOn(k).length, slipped: state.slips[k] || 0 }); }
   let streak = 0;
   let k = doneOn(today).length ? today : addDays(today, -1);
   while (doneOn(k).length) { streak++; k = addDays(k, -1); }
   const week = days.reduce((s, d) => s + d.done, 0);
+  const slipped = days.reduce((s, d) => s + d.slipped, 0);
+  const rate = week + slipped ? Math.round((week / (week + slipped)) * 100) : null;
   const open = state.tasks.filter((t) => !t.done && !t.gone);
-  const stuck = open.filter((t) => (t.moved || 0) >= 2).length;
-  return { days, streak, week, stuck };
+  const stuck = open.filter((t) => (t.moved || 0) >= 2).sort((a, b) => b.moved - a.moved);
+  // Schätzgenauigkeit: gemessene Zeit (Fokus-Timer) gegen geplante Dauer
+  const since = addDays(today, -30);
+  const timed = state.tasks.filter((t) => t.done && t.spent && t.doneDay >= since);
+  const est = timed.length >= 3 ? Math.round((timed.reduce((s, t) => s + t.spent, 0) / timed.reduce((s, t) => s + t.dur, 0) - 1) * 100) : null;
+  return { days, streak, week, slipped, rate, stuck, est, timedN: timed.length };
 }
 
 /* ---------- Sicherung ---------- */
